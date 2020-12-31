@@ -29,19 +29,41 @@ Public Class Form1
     End Function
 
     Private Function GetAllImageMuti(ByVal imgfold As String) '连带子文件夹,这个模式下生成直接在本过程里调用
-        Dim topfile() As String = GetAllImage(imgfold)
-        Dim alldir() As String = System.IO.Directory.GetDirectories(imgfold) '获取子文件夹
+        Dim topfile As Collection = GetAllImage(imgfold)
+        Dim alldir As String() = System.IO.Directory.GetDirectories(imgfold) '获取子文件夹
         '这里要说明一下，判断放到循环外面肯定效率是高的
         '把for each单独做个方法和这里复制两次其实是脱裤子放屁，况且一个全部合并生成pdf，一个是单独，还得传参还得判断，这还不如“冗余代码”，不如分两次
         If RadioButton1.Checked = True Then
-            For Each nextdirs In alldir
-
+            Dim temp
+            For Each nextdirs In alldir '所有子文件夹放入一个文件中
+                temp = GetAllImage(nextdirs) '为啥要这么搞呢，这是之前滥用collection犯下的错
+                'FFFFFFFF  U        U     CCCCCCCC  K     KK
+                'F         U        U    C          K   KK
+                'F         U        U   C           K KK
+                'FFFFFFFF  U        U  C            KK
+                'F         U        U  C            K KKK
+                'F         U        U   C           K    KK
+                'F          U      U     C          K     KK
+                'F           UUUUUU       CCCCCCCC  K       KK
+                For Each files In temp
+                    topfile.Add(files)
+                Next
             Next
         Else
-
+            Dim rootname As New System.IO.DirectoryInfo(imgfold)
+            If topfile.Count > 0 Then Merg2pdf(topfile, imgfold & "\" & rootname.Name & ".pdf") '根目录下图片
+            For Each nextdirs In alldir '所有子文件夹放入不同一个文件中
+                Dim subrootname As New System.IO.DirectoryInfo(nextdirs) '获取次级目录名字
+                Dim temp As Collection = GetAllImage(nextdirs) '定义个临时集合，用于判定该文件夹是否为空
+                If temp.Count > 0 Then
+                    Merg2pdf(temp, imgfold & "\" & subrootname.Name & ".pdf")
+                End If
+            Next
+            Exit Function '到这里已经结束了
         End If
-
+            Merg2pdf(topfile, TextBox2.Text) '这个给第一个分支用的
         Return 1 '没卵用，也许可以用于debug
+
     End Function
     Private Sub Button2_Click(sender As Object, e As EventArgs) Handles Button2.Click
         SaveFileDialog1.ShowDialog()
@@ -51,13 +73,18 @@ Public Class Form1
     Private Sub Button3_Click(sender As Object, e As EventArgs) Handles Conver.Click
         Conver.Enabled = False
         TrackBar1.Value = 0
-        Dim w8t2con = GetAllImage(TextBox1.Text)
+        Dim w8t2con
+        If CheckBox1.Checked Then
+            GetAllImageMuti(TextBox1.Text)
+            Exit Sub
+        End If
+        w8t2con = GetAllImage(TextBox1.Text)
         If w8t2con.Count = 0 Then
             MsgBox("没有找到图片")
             Conver.Enabled = True
             Exit Sub
         End If '直接有问题直接退出，不做分支了
-        Merg2pdf(w8t2con)
+        Merg2pdf(w8t2con, TextBox2.Text)
     End Sub
 
     Private Sub Form1_Load(sender As Object, e As EventArgs) Handles MyBase.Load
@@ -67,7 +94,7 @@ Public Class Form1
         TrackBar1.Location = New Point(4, 110)
     End Sub
 
-    Private Sub Merg2pdf(ByVal w8t2con)
+    Private Sub Merg2pdf(ByVal w8t2con As Collection, ByVal fileloca As String)
         TrackBar1.Maximum = w8t2con.Count
         Dim document As PdfDocument = New PdfDocument  '创建pdf文件
         For Each img In w8t2con
@@ -86,9 +113,10 @@ Public Class Form1
             page.Close()
             TrackBar1.Value += 1
         Next
-        document.Save(TextBox2.Text)
+        document.Save(fileloca)
         Beep()
         document.Close()
+        TrackBar1.Value = 0
         Conver.Enabled = True
     End Sub
 
@@ -113,4 +141,5 @@ Public Class Form1
             TextBox2.Text = temp
         End If
     End Sub
+
 End Class
