@@ -2,7 +2,8 @@
 Image2Pdf(文件夹内图片批量转PDF)
 ===============
 ![](https://raw.githubusercontent.com/NaughtDZ/Image2Pdf_2.0/master/%E6%8D%95%E8%8E%B7.PNG)
-##特点
+   
+特点
 -------------
     将选定文件夹内所有图片打包到一个PDF里（jpg,jpeg,png,bmp）
     自适应图片大小调整页面大小
