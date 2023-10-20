@@ -2,6 +2,8 @@
 Imports PdfSharp
 Imports PdfSharp.Pdf
 Imports PdfSharp.Drawing
+Imports System.Linq.Expressions
+
 Public Class Form1
     Private Sub Button1_Click(sender As Object, e As EventArgs) Handles Button1.Click
         FolderBrowserDialog1.ShowDialog() '读图片文件夹
@@ -61,7 +63,7 @@ Public Class Form1
             Next
             Exit Function '到这里已经结束了
         End If
-            Merg2pdf(topfile, TextBox2.Text) '这个给第一个分支用的
+        Merg2pdf(topfile, TextBox2.Text) '这个给第一个分支用的
         Return 1 '没卵用，也许可以用于debug
 
     End Function
@@ -84,7 +86,11 @@ Public Class Form1
             Conver.Enabled = True
             Exit Sub
         End If '直接有问题直接退出，不做分支了
-        Merg2pdf(w8t2con, TextBox2.Text)
+        Try
+            Merg2pdf(w8t2con, TextBox2.Text)
+        Catch ex As Exception
+            MsgBox(ex)
+        End Try
     End Sub
 
     Private Sub Form1_Load(sender As Object, e As EventArgs) Handles MyBase.Load
@@ -97,28 +103,54 @@ Public Class Form1
     Private Sub Merg2pdf(ByVal w8t2con As Collection, ByVal fileloca As String)
         TrackBar1.Maximum = w8t2con.Count
         Dim document As PdfDocument = New PdfDocument  '创建pdf文件
+
+        ' 创建一个临时文件夹来保存文件流
+        Dim tempFolderPath As String = Path.Combine(Path.GetTempPath(), "PdfSharpTemp")
+        If Not Directory.Exists(tempFolderPath) Then
+            Directory.CreateDirectory(tempFolderPath)
+        End If
+
         For Each img In w8t2con
-            Dim page As PdfPage = document.AddPage() '创建新页
-            Dim gfx As XGraphics = XGraphics.FromPdfPage(page) '创建画布在page上
-            Dim ximg As XImage = XImage.FromFile(img) '创建gfx可用的image
-            'Dim g As Graphics
-            'g = Graphics.FromImage(Image.FromFile(img))
-            'Debug.WriteLine(ximg.HorizontalResolution) 'pdf打印页面大小与DPI有关
-            page.Width = ximg.PixelWidth '设置页面为图片分辨率,piexel是分辨率，width是通过dpi转换后的大小
-            page.Height = ximg.PixelHeight
-            'Debug.WriteLine("{0} x:{1} y:{2}", img, page.Width, page.Height)
-            'Debug.WriteLine("x:{0} y:{1}", g.DpiX / TextBox3.Text, g.DpiY / TextBox3.Text)
-            gfx.ScaleTransform(ximg.HorizontalResolution / TextBox3.Text)
-            gfx.DrawImage(ximg, 0, 0)
-            page.Close()
+            Dim tempImgFile As String = Path.Combine(tempFolderPath, Path.GetFileName(img))
+            Using fs As New FileStream(tempImgFile, FileMode.Create, FileAccess.ReadWrite)
+                ' 写入图片数据到文件流中
+                Dim imgBytes As Byte() = File.ReadAllBytes(img)
+                fs.Write(imgBytes, 0, imgBytes.Length)
+                fs.Flush()
+                ' 将文件流的位置重置到开始
+                fs.Position = 0
+
+                Dim page As PdfPage = document.AddPage() '创建新页
+                Dim gfx As XGraphics = XGraphics.FromPdfPage(page) '创建画布在page上
+                Using ximg As XImage = XImage.FromStream(fs) '创建gfx可用的image
+                    'Dim g As Graphics
+                    'g = Graphics.FromImage(Image.FromFile(img))
+                    'Debug.WriteLine(ximg.HorizontalResolution) 'pdf打印页面大小与DPI有关
+                    page.Width = ximg.PixelWidth '设置页面为图片分辨率,piexel是分辨率，width是通过dpi转换后的大小
+                    page.Height = ximg.PixelHeight
+                    'Debug.WriteLine("{0} x:{1} y:{2}", img, page.Width, page.Height)
+                    'Debug.WriteLine("x:{0} y:{1}", g.DpiX / TextBox3.Text, g.DpiY / TextBox3.Text)
+                    gfx.ScaleTransform(ximg.HorizontalResolution / TextBox3.Text)
+                    gfx.DrawImage(ximg, 0, 0)
+                    page.Close()
+                End Using
+            End Using
             TrackBar1.Value += 1
         Next
         document.Save(fileloca)
         Beep()
         document.Close()
+        ' 删除临时文件夹
+        Directory.Delete(tempFolderPath, True)
         TrackBar1.Value = 0
         Conver.Enabled = True
+        Try
+            GC.Collect()
+        Catch ex As Exception
+            MsgBox(ex)
+        End Try
     End Sub
+
 
     Private Sub CheckBox1_CheckedChanged(sender As Object, e As EventArgs) Handles CheckBox1.CheckedChanged
         If CheckBox1.CheckState = CheckState.Checked Then
