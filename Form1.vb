@@ -1,8 +1,7 @@
 ﻿Imports System.IO '虽然写在这里，但是pdfsharp和sytem里都有Drawing等字类同名，请下面详写
-Imports PdfSharp
-Imports PdfSharp.Pdf
-Imports PdfSharp.Drawing
 Imports System.Linq.Expressions
+Imports Ghostscript
+Imports ImageMagick
 
 Public Class Form1
     Private Sub Button1_Click(sender As Object, e As EventArgs) Handles Button1.Click
@@ -89,7 +88,7 @@ Public Class Form1
         Try
             Merg2pdf(w8t2con, TextBox2.Text)
         Catch ex As Exception
-            MsgBox(ex)
+            MsgBox(ex.ToString)
         End Try
     End Sub
 
@@ -102,53 +101,56 @@ Public Class Form1
 
     Private Sub Merg2pdf(ByVal w8t2con As Collection, ByVal fileloca As String)
         TrackBar1.Maximum = w8t2con.Count
-        Dim document As PdfDocument = New PdfDocument  '创建pdf文件
-
-        ' 创建一个临时文件夹来保存文件流
-        Dim tempFolderPath As String = Path.Combine(Path.GetTempPath(), "PdfSharpTemp")
-        If Not Directory.Exists(tempFolderPath) Then
-            Directory.CreateDirectory(tempFolderPath)
-        End If
-
-        For Each img In w8t2con
-            Dim tempImgFile As String = Path.Combine(tempFolderPath, Path.GetFileName(img))
-            Using fs As New FileStream(tempImgFile, FileMode.Create, FileAccess.ReadWrite)
-                ' 写入图片数据到文件流中
-                Dim imgBytes As Byte() = File.ReadAllBytes(img)
-                fs.Write(imgBytes, 0, imgBytes.Length)
-                fs.Flush()
-                ' 将文件流的位置重置到开始
-                fs.Position = 0
-
-                Dim page As PdfPage = document.AddPage() '创建新页
-                Dim gfx As XGraphics = XGraphics.FromPdfPage(page) '创建画布在page上
-                Using ximg As XImage = XImage.FromStream(fs) '创建gfx可用的image
-                    'Dim g As Graphics
-                    'g = Graphics.FromImage(Image.FromFile(img))
-                    'Debug.WriteLine(ximg.HorizontalResolution) 'pdf打印页面大小与DPI有关
-                    page.Width = ximg.PixelWidth '设置页面为图片分辨率,piexel是分辨率，width是通过dpi转换后的大小
-                    page.Height = ximg.PixelHeight
-                    'Debug.WriteLine("{0} x:{1} y:{2}", img, page.Width, page.Height)
-                    'Debug.WriteLine("x:{0} y:{1}", g.DpiX / TextBox3.Text, g.DpiY / TextBox3.Text)
-                    gfx.ScaleTransform(ximg.HorizontalResolution / TextBox3.Text)
-                    gfx.DrawImage(ximg, 0, 0)
-                    page.Close()
-                End Using
+        If TextBox3.Text = 0 Then '免压缩，通常情况
+            Using images As MagickImageCollection = New MagickImageCollection
+                For Each picfile In w8t2con
+                    images.Add(picfile)
+                    TrackBar1.Value += 1
+                    Application.DoEvents()
+                Next
+                images.Write(fileloca)
             End Using
-            TrackBar1.Value += 1
-        Next
-        document.Save(fileloca)
+        Else
+            TrackBar1.Maximum = TrackBar1.Maximum * 2 + 1
+            Directory.CreateDirectory(TextBox1.Text & "\temp\")
+            '先转格式
+            Using tmpimages As MagickImageCollection = New MagickImageCollection()
+                For Each img In w8t2con
+                    tmpimages.Add(img)
+
+                Next
+                For i = 0 To tmpimages.Count - 1
+                    If TextBox3.Text >= 100 Then
+                        tmpimages(i).Format = MagickFormat.Png24
+                        tmpimages(i).Quality = 1
+                        tmpimages(i).Write(TextBox1.Text & "\temp\" & i & ".png")
+                    Else
+                        tmpimages(i).Format = MagickFormat.Jpg
+                        tmpimages(i).Quality = TextBox3.Text
+                        tmpimages(i).Write(TextBox1.Text & "\temp\" & i & ".jpg")
+                    End If
+
+                    TrackBar1.Value += 1
+                    Application.DoEvents()
+                Next
+            End Using
+
+            '再写入
+            Using images As MagickImageCollection = New MagickImageCollection
+                Dim files As New DirectoryInfo(TextBox1.Text & "\temp\")
+                Dim fileslist = files.GetFiles()
+                For Each picfile In fileslist
+                    images.Add(picfile.FullName)
+                    TrackBar1.Value += 1
+                    Application.DoEvents()
+                Next
+                images.Write(fileloca)
+            End Using
+            Directory.Delete(TextBox1.Text & "\temp\", True)
+        End If
         Beep()
-        document.Close()
-        ' 删除临时文件夹
-        Directory.Delete(tempFolderPath, True)
         TrackBar1.Value = 0
         Conver.Enabled = True
-        Try
-            GC.Collect()
-        Catch ex As Exception
-            MsgBox(ex)
-        End Try
     End Sub
 
 
@@ -173,5 +175,4 @@ Public Class Form1
             TextBox2.Text = temp
         End If
     End Sub
-
 End Class
