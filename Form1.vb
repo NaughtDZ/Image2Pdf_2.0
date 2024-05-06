@@ -123,11 +123,11 @@ Public Class Form1
                     If TextBox3.Text >= 100 Then
                         tmpimages(i).Format = MagickFormat.Png24
                         tmpimages(i).Quality = 1
-                        tmpimages(i).Write(TextBox1.Text & "\temp\" & i & ".png")
+                        tmpimages(i).Write(TextBox1.Text & "\temp\" & i.ToString("D5") & ".png")
                     Else
                         tmpimages(i).Format = MagickFormat.Jpg
                         tmpimages(i).Quality = TextBox3.Text
-                        tmpimages(i).Write(TextBox1.Text & "\temp\" & i & ".jpg")
+                        tmpimages(i).Write(TextBox1.Text & "\temp\" & i.ToString("D5") & ".jpg")
                     End If
 
                     TrackBar1.Value += 1
