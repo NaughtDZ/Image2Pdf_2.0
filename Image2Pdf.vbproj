@@ -45,7 +45,7 @@
     <OptionCompare>Binary</OptionCompare>
   </PropertyGroup>
   <PropertyGroup>
-    <OptionStrict>Off</OptionStrict>
+    <OptionStrict>On</OptionStrict>
   </PropertyGroup>
   <PropertyGroup>
     <OptionInfer>On</OptionInfer>
@@ -71,15 +71,30 @@
     <PlatformTarget>x64</PlatformTarget>
     <Prefer32Bit>true</Prefer32Bit>
   </PropertyGroup>
+  <!--
+    便携版：产出一个不需要旁边任何 dll 的单文件 exe。
+    做法是把 Magick.NET 的托管程序集和 Windows x64 原生库都嵌进 exe（见下面的 EmbeddedResource），
+    运行时由 PortableBootstrap 解出来（原生库没法直接从内存加载）。
+    只在 64 位 Windows 上可用；包里 win-x86 / win-arm64 的原生库不参与，省下约 38MB。
+  -->
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Portable|x64'">
+    <DefineTrace>true</DefineTrace>
+    <OutputPath>bin\Portable\</OutputPath>
+    <Optimize>true</Optimize>
+    <NoWarn>42016,41999,42017,42018,42019,42032,42036,42020,42021,42022</NoWarn>
+    <DebugType>none</DebugType>
+    <PlatformTarget>x64</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+  </PropertyGroup>
   <ItemGroup>
-    <Reference Include="Ghostscript.NET, Version=1.2.3.0, Culture=neutral, PublicKeyToken=f85051de34525b59, processorArchitecture=MSIL">
-      <HintPath>packages\Ghostscript.NET.1.2.3.1\lib\net40\Ghostscript.NET.dll</HintPath>
-    </Reference>
     <Reference Include="Magick.NET-Q8-AnyCPU, Version=13.4.0.0, Culture=neutral, PublicKeyToken=2004825badfa91ec, processorArchitecture=MSIL">
       <HintPath>packages\Magick.NET-Q8-AnyCPU.13.4.0\lib\netstandard20\Magick.NET-Q8-AnyCPU.dll</HintPath>
+      <!-- 便携版已把它嵌进 exe，就不要复制到输出目录 -->
+      <Private Condition="'$(Configuration)' == 'Portable'">False</Private>
     </Reference>
     <Reference Include="Magick.NET.Core, Version=13.4.0.0, Culture=neutral, PublicKeyToken=2004825badfa91ec, processorArchitecture=MSIL">
       <HintPath>packages\Magick.NET.Core.13.4.0\lib\netstandard20\Magick.NET.Core.dll</HintPath>
+      <Private Condition="'$(Configuration)' == 'Portable'">False</Private>
     </Reference>
     <Reference Include="System" />
     <Reference Include="System.Data" />
@@ -113,6 +128,7 @@
       <DependentUpon>Form1.vb</DependentUpon>
       <SubType>Form</SubType>
     </Compile>
+    <Compile Include="PortableBootstrap.vb" />
     <Compile Include="My Project\AssemblyInfo.vb" />
     <Compile Include="My Project\Application.Designer.vb">
       <AutoGen>True</AutoGen>
@@ -141,6 +157,21 @@
       <SubType>Designer</SubType>
     </EmbeddedResource>
   </ItemGroup>
+  <!-- 便携版把依赖嵌进 exe；普通 Debug/Release 不包含这些资源，PortableBootstrap 会自动空转 -->
+  <ItemGroup Condition=" '$(Configuration)' == 'Portable' ">
+    <EmbeddedResource Include="packages\Magick.NET-Q8-AnyCPU.13.4.0\lib\netstandard20\Magick.NET-Q8-AnyCPU.dll">
+      <LogicalName>Image2Pdf.Portable.Magick.NET-Q8-AnyCPU.dll</LogicalName>
+      <Visible>false</Visible>
+    </EmbeddedResource>
+    <EmbeddedResource Include="packages\Magick.NET.Core.13.4.0\lib\netstandard20\Magick.NET.Core.dll">
+      <LogicalName>Image2Pdf.Portable.Magick.NET.Core.dll</LogicalName>
+      <Visible>false</Visible>
+    </EmbeddedResource>
+    <EmbeddedResource Include="packages\Magick.NET-Q8-AnyCPU.13.4.0\runtimes\win-x64\native\Magick.Native-Q8-x64.dll">
+      <LogicalName>Image2Pdf.Portable.Magick.Native-Q8-x64.dll</LogicalName>
+      <Visible>false</Visible>
+    </EmbeddedResource>
+  </ItemGroup>
   <ItemGroup>
     <None Include="My Project\Application.myapp">
       <Generator>MyApplicationCodeGenerator</Generator>
@@ -156,6 +187,14 @@
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.VisualBasic.targets" />
   <Import Project="packages\Magick.NET-Q8-AnyCPU.13.4.0\build\netstandard20\Magick.NET-Q8-AnyCPU.targets" Condition="Exists('packages\Magick.NET-Q8-AnyCPU.13.4.0\build\netstandard20\Magick.NET-Q8-AnyCPU.targets')" />
+  <!--
+    上面的 targets 会把 runtimes\win*\native\*.dll 作为 None/Content 复制到输出目录。
+    便携版已经把它们嵌进 exe 了，这里撤掉，否则输出目录会多出约 60MB 的 dll。
+  -->
+  <ItemGroup Condition=" '$(Configuration)' == 'Portable' And '@(NativeWindowsDLL)' != '' ">
+    <None Remove="@(NativeWindowsDLL)" />
+    <Content Remove="@(NativeWindowsDLL)" />
+  </ItemGroup>
   <Target Name="EnsureNuGetPackageBuildImports" BeforeTargets="PrepareForBuild">
     <PropertyGroup>
       <ErrorText>这台计算机上缺少此项目引用的 NuGet 程序包。使用“NuGet 程序包还原”可下载这些程序包。有关更多信息，请参见 http://go.microsoft.com/fwlink/?LinkID=322105。缺少的文件是 {0}。</ErrorText>
