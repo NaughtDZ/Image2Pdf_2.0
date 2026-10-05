@@ -40,6 +40,7 @@ Public Class Form1
     Private Sub Form1_Load(sender As Object, e As EventArgs) Handles MyBase.Load
         ' 便携版：先把内嵌的原生库释放出来并告诉 Magick.NET 去哪里找，必须早于任何 Magick 调用
         PortableBootstrap.ApplyNativeLibraryDirectory()
+        ConfigureMagickResources()
 
         SaveFileDialog1.AddExtension = True
         SaveFileDialog1.Filter = "PDF文件(*.pdf)|*.pdf"
@@ -56,6 +57,26 @@ Public Class Form1
         _outputPathBackup = TextBox2.Text
         ApplyLayout()
         ApplyOutputMode()
+    End Sub
+
+    ''' <summary>
+    ''' 指定 ImageMagick 的磁盘缓存位置。
+    ''' </summary>
+    ''' <remarks>
+    ''' 这里原本还想用 ResourceLimits.Memory / Area 限制像素缓存上限来压低内存占用，实测无效：
+    ''' 即使把 Memory 压到 100MB、单图 Area 压到 1M 像素（2000x2800 远超此值），
+    ''' 40 张图的峰值内存仍是 713MB 纹丝不动，而 Area 反而让耗时从 1.8s 涨到 2.2s
+    ''' （每张图都被迫落磁盘做无用功）。原因是写多页 PDF 时必须让所有页同时驻留，
+    ''' Magick.NET 这一层不受这两个限制约束。
+    ''' 所以只保留临时目录设置。内存占用与图片张数成正比（40 张 2000x2800 约 713MB），
+    ''' 要压下来只能分批生成 PDF，而不是调这里的参数。
+    ''' </remarks>
+    Private Shared Sub ConfigureMagickResources()
+        Try
+            ImageMagick.MagickNET.SetTempDirectory(Path.GetTempPath())
+        Catch
+            ' 设不上也不该影响正常使用
+        End Try
     End Sub
 
     ''' <summary>按是否展开“子文件夹选项”调整进度区位置和窗体高度。</summary>
@@ -184,11 +205,50 @@ Public Class Form1
         Public ReadOnly Done As Integer
         Public ReadOnly Total As Integer
         Public ReadOnly FileName As String
+        ''' <summary>当前阶段：读取 / 转换 / 写入，用于状态栏显示。</summary>
+        Public ReadOnly Phase As String
 
-        Public Sub New(ByVal done As Integer, ByVal total As Integer, ByVal fileName As String)
+        Public Sub New(ByVal done As Integer, ByVal total As Integer, ByVal fileName As String,
+                       Optional ByVal phase As String = "")
             Me.Done = done
             Me.Total = total
             Me.FileName = fileName
+            Me.Phase = phase
+        End Sub
+    End Class
+
+    ''' <summary>
+    ''' 把高频进度回报压到大约每秒 12 次。
+    ''' </summary>
+    ''' <remarks>
+    ''' 每张图都往 UI 线程 Post 一次，几千张图就是几千条消息，界面反而更卡、进度看起来更不更新。
+    ''' 阶段切换和最后一步一定送达，保证状态栏不会停在旧阶段、进度条能走到头。
+    ''' 只在单个后台线程里调用，所以不需要加锁。
+    ''' </remarks>
+    Private NotInheritable Class ThrottledProgress
+        Implements IProgress(Of ProgressReport)
+
+        Private Const MinIntervalMs As Long = 80
+
+        Private ReadOnly _inner As IProgress(Of ProgressReport)
+        Private ReadOnly _clock As Stopwatch = Stopwatch.StartNew()
+        Private _lastMs As Long = -MinIntervalMs
+        Private _lastPhase As String = Nothing
+
+        Public Sub New(ByVal inner As IProgress(Of ProgressReport))
+            _inner = inner
+        End Sub
+
+        Public Sub Report(ByVal value As ProgressReport) Implements IProgress(Of ProgressReport).Report
+            If value Is Nothing Then Return
+            Dim now As Long = _clock.ElapsedMilliseconds
+            Dim phaseChanged As Boolean = (value.Phase <> _lastPhase)
+            Dim isLast As Boolean = (value.Total > 0 AndAlso value.Done >= value.Total)
+            If phaseChanged OrElse isLast OrElse (now - _lastMs) >= MinIntervalMs Then
+                _lastMs = now
+                _lastPhase = value.Phase
+                _inner.Report(value)
+            End If
         End Sub
     End Class
 
@@ -417,11 +477,19 @@ Public Class Form1
                                        ByVal token As CancellationToken) As Task(Of List(Of String))
         Dim errors As New List(Of String)
         Await Task.Run(Sub()
-                           Dim total As Integer = jobs.Sum(Function(j) j.InputFiles.Count)
+                           ' 进度按“步骤”算：每张图读一次算一步，重压缩模式下每张再编码一次算一步，
+                           ' 每个 PDF 收尾再算一步。这样进度条能全程推进，而不是读完图就卡住不动。
+                           Dim total As Integer = 0
+                           For Each job As ConvertJob In jobs
+                               total += job.InputFiles.Count
+                               If quality > 0 Then total += job.InputFiles.Count
+                               total += 1
+                           Next
+                           Dim throttled As New ThrottledProgress(progress)
                            Dim done As Integer = 0
                            For Each job As ConvertJob In jobs
                                token.ThrowIfCancellationRequested()
-                               done = ConvertOneJob(job, quality, token, progress, done, total, errors)
+                               done = ConvertOneJob(job, quality, token, throttled, done, total, errors)
                            Next
                        End Sub)
         Return errors
@@ -444,8 +512,10 @@ Public Class Form1
                         errors.Add("读取失败：" & Path.GetFileName(f) & " —— " & ex.Message)
                     End Try
                     done += 1
-                    progress.Report(New ProgressReport(done, total, Path.GetFileName(f)))
+                    progress.Report(New ProgressReport(done, total, Path.GetFileName(f), "读取"))
                 Next
+                done += 1
+                progress.Report(New ProgressReport(done, total, Path.GetFileName(job.OutputPath), "写入"))
                 Try
                     images.Write(job.OutputPath)
                 Catch ex As Exception
@@ -471,6 +541,8 @@ Public Class Form1
                         Catch ex As Exception
                             errors.Add("读取失败：" & Path.GetFileName(f) & " —— " & ex.Message)
                         End Try
+                        done += 1
+                        progress.Report(New ProgressReport(done, total, Path.GetFileName(f), "读取"))
                     Next
 
                     For i As Integer = 0 To tmpImages.Count - 1
@@ -487,7 +559,7 @@ Public Class Form1
                         tempFiles.Add(tempPath)
 
                         done += 1
-                        progress.Report(New ProgressReport(done, total, sourceNames(i)))
+                        progress.Report(New ProgressReport(done, total, sourceNames(i), "转换"))
                     Next
                 End Using
 
@@ -497,6 +569,8 @@ Public Class Form1
                         token.ThrowIfCancellationRequested()
                         images.Add(p)
                     Next
+                    done += 1
+                    progress.Report(New ProgressReport(done, total, Path.GetFileName(job.OutputPath), "写入"))
                     Try
                         images.Write(job.OutputPath)
                     Catch ex As Exception
@@ -523,7 +597,8 @@ Public Class Form1
             ProgressBar1.Maximum = Math.Max(1, r.Total)
         End If
         ProgressBar1.Value = Math.Min(Math.Max(0, r.Done), ProgressBar1.Maximum)
-        LabelStatus.Text = r.Done & " / " & r.Total & "    " & r.FileName
+        Dim phase As String = If(String.IsNullOrEmpty(r.Phase), "", r.Phase & " ")
+        LabelStatus.Text = phase & r.Done & " / " & r.Total & "    " & r.FileName
     End Sub
 
     Private Sub SetBusy(ByVal busy As Boolean)
